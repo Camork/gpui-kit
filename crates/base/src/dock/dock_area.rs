@@ -494,6 +494,13 @@ impl DockArea {
         };
         let source = self.placement_of_panel(panel);
 
+        // The panel must permit dropping into the destination dock placement.
+        if let Some(panel_view) = self.panel(panel) {
+            if !panel_view.can_drop(destination, cx) {
+                return;
+            }
+        }
+
         // A split target divides an existing slot, so the tree needs real
         // pixels to divide.
         if matches!(target, InsertTarget::Split { .. }) {
@@ -893,9 +900,21 @@ impl DockArea {
         // Planned first, applied second: the plan borrows the trees, and
         // applying it needs `&mut self` to fill the caches.
         let mut plans = Vec::new();
-        plan_tree(&self.center, false, self.locked, &mut plans);
-        for pane in self.docks.values() {
-            plan_tree(&pane.tree, !pane.dock.is_open(), self.locked, &mut plans);
+        plan_tree(
+            &self.center,
+            DockPlacement::Center,
+            false,
+            self.locked,
+            &mut plans,
+        );
+        for (placement, pane) in &self.docks {
+            plan_tree(
+                &pane.tree,
+                *placement,
+                !pane.dock.is_open(),
+                self.locked,
+                &mut plans,
+            );
         }
 
         // Sets rather than vectors: these are membership tests, run once per
@@ -1589,9 +1608,15 @@ fn sync_split_panels(
     );
 }
 
-fn plan_tree(tree: &PaneTree, collapsed: bool, locked: bool, out: &mut Vec<ContainerPlan>) {
+fn plan_tree(
+    tree: &PaneTree,
+    placement: DockPlacement,
+    collapsed: bool,
+    locked: bool,
+    out: &mut Vec<ContainerPlan>,
+) {
     // The root has nothing beside it by definition.
-    plan_node(tree.root(), true, collapsed, locked, out);
+    plan_node(tree.root(), true, collapsed, locked, placement, out);
 }
 
 fn plan_node(
@@ -1599,6 +1624,7 @@ fn plan_node(
     alone: bool,
     collapsed: bool,
     locked: bool,
+    placement: DockPlacement,
     out: &mut Vec<ContainerPlan>,
 ) {
     match node.kind() {
@@ -1615,7 +1641,7 @@ fn plan_node(
             });
             let children_alone = children.len() <= 1;
             for child in children {
-                plan_node(child, children_alone, collapsed, locked, out);
+                plan_node(child, children_alone, collapsed, locked, placement, out);
             }
         }
         PaneRef::Tabs { panels, active_ix } => out.push(ContainerPlan::Group {
@@ -1624,6 +1650,7 @@ fn plan_node(
             active_ix,
             constraints: TabGroupConstraints::in_split(alone)
                 .dock_locked(locked)
+                .placement(placement)
                 .collapsed(collapsed),
         }),
     }
@@ -3325,6 +3352,112 @@ mod tests {
         assert!(
             !seen.contains(&("Alpha", PanelSignal::Active(true))),
             "and it was displayed in both, so it is not told `true` twice"
+        );
+    }
+
+    #[gpui::test]
+    fn a_restricted_panel_refuses_to_move_to_a_disallowed_dock(cx: &mut TestAppContext) {
+        let log = log_of();
+        let (area, alpha, cx) = two_groups(&log, cx);
+        cx.update(|_, cx| {
+            alpha.update(cx, |alpha, cx| {
+                alpha.set_allowed_placements(vec![DockPlacement::Center], cx)
+            });
+        });
+        cx.update(|window, cx| {
+            let gamma = TestPanel::logging("Gamma", &log, cx);
+            area.update(cx, |area, cx| {
+                area.set_dock(
+                    DockPlacement::Left,
+                    DockLayout::tabs().panel(gamma),
+                    window,
+                    cx,
+                );
+            });
+        });
+        cx.run_until_parked();
+        drain(&log);
+
+        let alpha_id = panel_id_of(&alpha);
+        let dock_group = cx.read(|cx| {
+            area.read(cx)
+                .layout(DockPlacement::Left)
+                .unwrap()
+                .root()
+                .id()
+        });
+
+        cx.update(|window, cx| {
+            area.update(cx, |area, cx| {
+                area.move_panel(
+                    alpha_id,
+                    InsertTarget::Tabs {
+                        node: dock_group,
+                        ix: None,
+                        activate: true,
+                    },
+                    window,
+                    cx,
+                );
+            });
+        });
+        cx.run_until_parked();
+
+        assert!(
+            cx.read(|cx| area
+                .read(cx)
+                .layout(DockPlacement::Center)
+                .unwrap()
+                .find_panel_node(alpha_id))
+                .is_some(),
+            "the restricted panel remains in the center"
+        );
+        assert_eq!(
+            cx.read(|cx| area
+                .read(cx)
+                .layout(DockPlacement::Left)
+                .unwrap()
+                .find_panel_node(alpha_id)),
+            None,
+            "and was not moved to the disallowed dock"
+        );
+    }
+
+    #[gpui::test]
+    fn a_restricted_panel_can_still_move_within_an_allowed_dock(cx: &mut TestAppContext) {
+        let log = log_of();
+        let (area, alpha, cx) = two_groups(&log, cx);
+        cx.update(|_, cx| {
+            alpha.update(cx, |alpha, cx| {
+                alpha.set_allowed_placements(vec![DockPlacement::Center], cx)
+            });
+        });
+        let target = child_node(&area, 1, cx);
+        let alpha_id = panel_id_of(&alpha);
+        cx.update(|window, cx| {
+            area.update(cx, |area, cx| {
+                area.move_panel(
+                    alpha_id,
+                    InsertTarget::Tabs {
+                        node: target,
+                        ix: None,
+                        activate: true,
+                    },
+                    window,
+                    cx,
+                );
+            });
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            cx.read(|cx| area
+                .read(cx)
+                .layout(DockPlacement::Center)
+                .unwrap()
+                .find_panel_node(alpha_id)),
+            Some(target),
+            "a restricted panel can still move between groups in an allowed dock"
         );
     }
 

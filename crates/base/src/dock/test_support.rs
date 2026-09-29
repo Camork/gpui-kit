@@ -14,6 +14,7 @@ use gpui::{
 
 use super::layout::{NodeId, PanelId};
 use super::panel::{Panel, PanelEvent, PanelView};
+use super::state::DockPlacement;
 use super::tab_group::{TabGroup, TabGroupConstraints};
 
 /// One thing a panel was told, in delivery order.
@@ -69,6 +70,7 @@ pub(crate) struct TestPanel {
     log: Log,
     visible: bool,
     zoomable: bool,
+    allowed_placements: Option<Vec<DockPlacement>>,
     pub(crate) group: Option<WeakEntity<TabGroup>>,
 }
 
@@ -87,6 +89,7 @@ impl TestPanel {
             log,
             visible: true,
             zoomable: true,
+            allowed_placements: None,
             group: None,
         })
     }
@@ -99,6 +102,16 @@ impl TestPanel {
     /// A panel that refuses to zoom, which its group must honour.
     pub(crate) fn set_zoomable(&mut self, zoomable: bool, cx: &mut Context<Self>) {
         self.zoomable = zoomable;
+        cx.notify();
+    }
+
+    /// Restrict the dock placements this panel can be dropped into.
+    pub(crate) fn set_allowed_placements(
+        &mut self,
+        placements: Vec<DockPlacement>,
+        cx: &mut Context<Self>,
+    ) {
+        self.allowed_placements = Some(placements);
         cx.notify();
     }
 
@@ -119,6 +132,13 @@ impl Panel for TestPanel {
 
     fn zoomable(&self, _: &App) -> bool {
         self.zoomable
+    }
+
+    fn can_drop(&self, target: DockPlacement, _: &App) -> bool {
+        self.allowed_placements
+            .as_ref()
+            .map(|p| p.contains(&target))
+            .unwrap_or(true)
     }
 
     fn set_active(&mut self, active: bool, _: &mut Window, _: &mut Context<Self>) {

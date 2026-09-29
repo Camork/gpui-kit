@@ -22,7 +22,7 @@ use gpui::{
     AnyElement, AnyView, App, Context, Entity, FocusHandle, Hsla, IntoElement, SharedString,
     WeakEntity, Window,
 };
-use gpui_base::dock::{PanelId, PanelState, TabGroup};
+use gpui_base::dock::{DockPlacement, PanelId, PanelState, TabGroup};
 use rust_i18n::t;
 
 use crate::{button::Button, menu::PopupMenu};
@@ -267,6 +267,10 @@ impl gpui_base::dock::PanelView for PanelHandle {
 
     fn closable(&self, cx: &App) -> bool {
         self.0.closable(cx)
+    }
+
+    fn can_drop(&self, target: DockPlacement, cx: &App) -> bool {
+        self.0.can_drop(target, cx)
     }
 
     fn zoomable(&self, cx: &App) -> bool {

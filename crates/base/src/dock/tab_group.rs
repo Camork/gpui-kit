@@ -19,6 +19,7 @@ use super::{
     },
     layout::{InsertTarget, NodeId, PanelId},
     panel::PanelView,
+    state::DockPlacement,
 };
 
 /// Behavior a tab group cannot carry out on its own.
@@ -64,6 +65,7 @@ pub struct TabGroupConstraints {
     dock_locked: bool,
     collapsed: bool,
     closable: bool,
+    placement: DockPlacement,
 }
 
 impl TabGroupConstraints {
@@ -75,6 +77,7 @@ impl TabGroupConstraints {
             dock_locked: true,
             collapsed: false,
             closable: false,
+            placement: DockPlacement::Center,
         }
     }
 
@@ -87,7 +90,17 @@ impl TabGroupConstraints {
             dock_locked: false,
             collapsed: false,
             closable: true,
+            placement: DockPlacement::Center,
         }
+    }
+
+    pub fn placement(mut self, placement: DockPlacement) -> Self {
+        self.placement = placement;
+        self
+    }
+
+    pub fn is_placement(&self) -> DockPlacement {
+        self.placement
     }
 
     /// Whether the dock as a whole forbids rearranging.
@@ -459,6 +472,13 @@ impl TabGroup {
         !self.is_locked()
     }
 
+    fn can_drop(&self, drag: &DragPanel, cx: &App) -> bool {
+        if !self.droppable() {
+            return false;
+        }
+        drag.can_drop(self.constraints.is_placement(), cx)
+    }
+
     fn focus_active_panel(&self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(panel) = self.active_panel(cx) {
             panel.focus_handle(cx).focus(window, cx);
@@ -525,14 +545,18 @@ impl TabGroup {
             return;
         }
 
-        let placement = split_placement_at(bounds, drag.event.position);
         let dragged = drag.drag(cx);
+        if !self.can_drop(dragged, cx) {
+            self.clear_drop_indicator(cx);
+            return;
+        }
         // The placeholder flies in from wherever the preview currently is.
         let source = DropPlaceholderBounds::new(
             drag.event.position - dragged.drag_offset() - bounds.origin,
             dragged.preview_size(),
         );
 
+        let placement = split_placement_at(bounds, drag.event.position);
         self.sync_drop_placeholder(bounds, placement, dragged.drag_session_id(), source, cx);
     }
 
@@ -630,6 +654,12 @@ impl TabGroup {
         activate: bool,
         cx: &mut Context<Self>,
     ) {
+        if !self.can_drop(drag, cx) {
+            self.drop_indicator = None;
+            cx.notify();
+            return;
+        }
+
         let indicator = self.drop_indicator.take();
         let placement = match ix {
             Some(_) => None,
@@ -846,6 +876,19 @@ impl TabGroupContext {
         self.droppable
     }
 
+    /// The dock placement this group is placed in.
+    pub fn placement(&self) -> DockPlacement {
+        self.constraints.is_placement()
+    }
+
+    /// Whether this group accepts dropping `drag`.
+    pub fn can_drop(&self, drag: &DragPanel, cx: &App) -> bool {
+        if !self.droppable {
+            return false;
+        }
+        drag.can_drop(self.placement(), cx)
+    }
+
     pub fn select_tab(&self, ix: usize, window: &mut Window, cx: &mut App) {
         (self.on_select_tab)(ix, window, cx);
     }
@@ -863,7 +906,7 @@ impl TabGroupContext {
     pub fn drag_panel(&self, ix: usize, cx: &App) -> Option<DragPanel> {
         self.panels
             .get(ix)
-            .map(|panel| DragPanel::new(panel.panel_id(cx), self.node))
+            .map(|panel| DragPanel::with_view(panel.panel_id(cx), self.node, Some(panel.clone())))
     }
 
     /// A panel dropped on the tab bar. `ix` names the slot it lands in, or

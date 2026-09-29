@@ -584,15 +584,24 @@ impl TabGroupSkin {
                                     })
                                 })
                                 .when(droppable, |this| {
-                                    this.drag_over::<DragPanel>(|this, _, _, cx| {
-                                        this.rounded_l_none()
-                                            .border_l_2()
-                                            .border_r_0()
-                                            .border_color(cx.theme().drag_border)
+                                    this.drag_over::<DragPanel>({
+                                        let group = group.clone();
+                                        move |this, drag, _, cx| {
+                                            if !group.can_drop(drag, cx) {
+                                                return this;
+                                            }
+                                            this.rounded_l_none()
+                                                .border_l_2()
+                                                .border_r_0()
+                                                .border_color(cx.theme().drag_border)
+                                        }
                                     })
                                     .on_drop({
                                         let group = group.clone();
                                         move |drag: &DragPanel, window, cx| {
+                                            if !group.can_drop(drag, cx) {
+                                                return;
+                                            }
                                             group.drop_panel(
                                                 drag.clone(),
                                                 Some(ix),
@@ -627,13 +636,22 @@ impl TabGroupSkin {
                     .flex_grow_1()
                     .min_w_16()
                     .when(droppable, |this| {
-                        this.drag_over::<DragPanel>(|this, _, _, cx| {
-                            this.bg(cx.theme().tokens.drop_target)
+                        this.drag_over::<DragPanel>({
+                            let group = group.clone();
+                            move |this, drag, _, cx| {
+                                if !group.can_drop(drag, cx) {
+                                    return this;
+                                }
+                                this.bg(cx.theme().tokens.drop_target)
+                            }
                         })
                         .on_drop({
                             let group = group.clone();
                             let node = group.node();
                             move |drag: &DragPanel, window, cx| {
+                                if !group.can_drop(drag, cx) {
+                                    return;
+                                }
                                 // A panel dropped past its own last tab lands
                                 // in the final slot; one from elsewhere is
                                 // appended in the background.

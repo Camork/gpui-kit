@@ -5,7 +5,7 @@ use gpui::{
 };
 
 use super::layout::PanelId;
-use super::state::PanelState;
+use super::state::{DockPlacement, PanelState};
 use super::state_convert::PanelSource;
 use super::tab_group::TabGroup;
 
@@ -38,6 +38,15 @@ pub trait Panel: EventEmitter<PanelEvent> + Render + Focusable {
     /// Whether the panel can zoom at all. Where the zoom control appears is a
     /// presentation decision and belongs to the layer above.
     fn zoomable(&self, cx: &App) -> bool {
+        true
+    }
+
+    /// Whether the panel may be placed into the given dock placement. Default is `true`.
+    ///
+    /// When returning `false` for a placement, the panel cannot be dropped or
+    /// moved into that dock, though it may still be rearranged within docks
+    /// where it is permitted.
+    fn can_drop(&self, _target: DockPlacement, _cx: &App) -> bool {
         true
     }
 
@@ -100,6 +109,7 @@ pub trait PanelView: 'static + Send + Sync {
     fn panel_id(&self, cx: &App) -> PanelId;
     fn closable(&self, cx: &App) -> bool;
     fn zoomable(&self, cx: &App) -> bool;
+    fn can_drop(&self, target: DockPlacement, cx: &App) -> bool;
     fn visible(&self, cx: &App) -> bool;
     fn set_active(&self, active: bool, window: &mut Window, cx: &mut App);
     fn set_zoomed(&self, zoomed: bool, window: &mut Window, cx: &mut App);
@@ -146,6 +156,10 @@ impl<T: Panel> PanelView for Entity<T> {
 
     fn zoomable(&self, cx: &App) -> bool {
         self.read(cx).zoomable(cx)
+    }
+
+    fn can_drop(&self, target: DockPlacement, cx: &App) -> bool {
+        self.read(cx).can_drop(target, cx)
     }
 
     fn visible(&self, cx: &App) -> bool {
@@ -291,7 +305,48 @@ mod tests {
         cx.read(|cx| {
             assert_eq!(view.panel_name(cx), "Probe");
             assert_eq!(view.visible(cx), false);
+            assert_eq!(view.can_drop(DockPlacement::Center, cx), true);
+            assert_eq!(view.can_drop(DockPlacement::Left, cx), true);
             assert_eq!(view.panel_id(cx), PanelId::from(panel.entity_id()));
+        });
+    }
+
+    struct CenterOnlyProbe {
+        focus_handle: FocusHandle,
+    }
+
+    impl Panel for CenterOnlyProbe {
+        fn panel_name(&self) -> &'static str {
+            "CenterOnly"
+        }
+
+        fn can_drop(&self, target: DockPlacement, _: &App) -> bool {
+            target == DockPlacement::Center
+        }
+    }
+
+    impl EventEmitter<PanelEvent> for CenterOnlyProbe {}
+    impl Focusable for CenterOnlyProbe {
+        fn focus_handle(&self, _: &App) -> FocusHandle {
+            self.focus_handle.clone()
+        }
+    }
+    impl Render for CenterOnlyProbe {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            Empty
+        }
+    }
+
+    #[gpui::test]
+    fn a_panel_can_restrict_where_it_drops(cx: &mut TestAppContext) {
+        let panel = cx.new(|cx| CenterOnlyProbe {
+            focus_handle: cx.focus_handle(),
+        });
+        let view: Arc<dyn PanelView> = Arc::new(panel);
+        cx.read(|cx| {
+            assert_eq!(view.can_drop(DockPlacement::Center, cx), true);
+            assert_eq!(view.can_drop(DockPlacement::Left, cx), false);
+            assert_eq!(view.can_drop(DockPlacement::Bottom, cx), false);
         });
     }
 

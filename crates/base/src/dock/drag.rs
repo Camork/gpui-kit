@@ -21,19 +21,18 @@ use gpui::{
 use crate::Placement;
 
 use super::layout::{NodeId, PanelId};
+use super::panel::PanelView;
+use super::state::DockPlacement;
 
 /// A panel being dragged out of a tab group.
 ///
-/// The panel is carried as a [`PanelId`] rather than a view handle: the base
-/// layer has no `PanelView` trait or `TabPanel` entity of its own (those are
-/// layered above), and the layout algebra already addresses panels this way
-/// (see `insert_panel`/`remove_panel`/`move_panel` in `layout::edit`). A
-/// consumer resolves the id back to a view through the dock area's panel
-/// map.
+/// The panel is carried as a [`PanelId`] along with its [`PanelView`] view handle
+/// to query capabilities such as placement drop permissions during drag operations.
 #[derive(Clone)]
 pub struct DragPanel {
     panel: PanelId,
     source: NodeId,
+    panel_view: Option<Arc<dyn PanelView>>,
     drag_offset: Rc<Cell<Point<Pixels>>>,
     preview_size: Rc<Cell<Size<Pixels>>>,
     drag_session_id: u64,
@@ -48,9 +47,18 @@ pub(crate) const ITEM_DRAG_SESSION_ID: u64 = 0;
 
 impl DragPanel {
     pub fn new(panel: PanelId, source: NodeId) -> Self {
+        Self::with_view(panel, source, None)
+    }
+
+    pub fn with_view(
+        panel: PanelId,
+        source: NodeId,
+        panel_view: Option<Arc<dyn PanelView>>,
+    ) -> Self {
         Self {
             panel,
             source,
+            panel_view,
             drag_offset: Rc::new(Cell::new(Point::default())),
             preview_size: Rc::new(Cell::new(Size::default())),
             drag_session_id: NEXT_DRAG_SESSION_ID.fetch_add(1, Ordering::Relaxed),
@@ -59,6 +67,18 @@ impl DragPanel {
 
     pub fn panel(&self) -> PanelId {
         self.panel
+    }
+
+    pub fn panel_view(&self) -> Option<&Arc<dyn PanelView>> {
+        self.panel_view.as_ref()
+    }
+
+    /// Whether this panel may be placed into the given dock placement.
+    pub fn can_drop(&self, target: DockPlacement, cx: &gpui::App) -> bool {
+        self.panel_view
+            .as_ref()
+            .map(|v| v.can_drop(target, cx))
+            .unwrap_or(true)
     }
 
     /// The tab group this panel was dragged out of.
